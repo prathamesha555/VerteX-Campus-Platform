@@ -126,6 +126,15 @@ type Announcement = {
   createdAt: string;
 };
 
+type NotificationRecord = {
+  id: string;
+  event_id: string | null;
+  title: string;
+  message: string;
+  created_at: string;
+  read_at: string | null;
+};
+
 type EventForm = {
   title: string;
   category: string;
@@ -222,15 +231,18 @@ const navigation: {
       { name: "Calendar", icon: Clock3 },
     ],
   },
+
   {
-    title: "OPERATIONS",
-    items: [
-      { name: "Live Change Centre", icon: Radio },
-      { name: "Volunteers", icon: Users },
-      { name: "Issue Center", icon: CircleAlert },
-      { name: "Communications", icon: MessageSquareText },
-    ],
-  },
+  title: "OPERATIONS",
+  items: [
+    { name: "Live Change Centre", icon: Radio },
+    { name: "Notifications", icon: Bell },
+    { name: "Volunteers", icon: Users },
+    { name: "Issue Center", icon: CircleAlert },
+    { name: "Communications", icon: MessageSquareText },
+  ],
+},
+
   {
   title: "INTELLIGENCE",
   items: [
@@ -477,6 +489,9 @@ export default function Home() {
 
   const [announcements, setAnnouncements] =
     useState<Announcement[]>([]);
+
+  const [notifications, setNotifications] =
+  useState<NotificationRecord[]>([]);
 
   const [ready, setReady] = useState(false);
 
@@ -936,7 +951,83 @@ async function handleLogout() {
 
     return () => window.clearTimeout(timeout);
   }, [toast]);
+/* =======================================================
+   LOAD AND REFRESH NOTIFICATIONS
+======================================================= */
 
+useEffect(() => {
+  let active = true;
+
+  const supabase = createClient();
+
+  async function loadNotifications() {
+    try {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        throw sessionError;
+      }
+
+      if (!session?.user) {
+        if (active) {
+          setNotifications([]);
+        }
+
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("notifications")
+        .select(
+          "id, event_id, title, message, created_at, read_at"
+        )
+        .order("created_at", {
+          ascending: false,
+        })
+        .limit(50);
+
+      if (error) {
+        throw error;
+      }
+
+      if (active) {
+        setNotifications(
+          (data ?? []) as NotificationRecord[]
+        );
+      }
+    } catch (error) {
+      console.error(
+        "Could not load notifications:",
+        error
+      );
+    }
+  }
+
+  void loadNotifications();
+
+  const channel = supabase
+    .channel("vertex-notifications")
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "notifications",
+      },
+      () => {
+        void loadNotifications();
+      }
+    )
+    .subscribe();
+
+  return () => {
+    active = false;
+    void supabase.removeChannel(channel);
+  };
+}, []);
   /* -------------------------------------------------------
      DERIVED DATA
   ------------------------------------------------------- */
@@ -1346,47 +1437,121 @@ async function saveEvent(
     }
   }
 }
-  /* -------------------------------------------------------
-     EVENT WORKFLOW
-  ------------------------------------------------------- */
 
-  function changeEventStatus(
-    id: string,
-    status: EventStatus,
-  ) {
+/* -------------------------------------------------------
+   EVENT WORKFLOW — SAVE CHANGES TO SUPABASE
+------------------------------------------------------- */
+
+async function changeEventStatus(
+  id: string,
+  status: EventStatus
+) {
+  // Only administrators may change event status.
+  if (userRole !== "admin") {
+    setToast(
+      "Only administrators can change event status."
+    );
+    return;
+  }
+
+  try {
+    const supabase = createClient();
+
+    // Save the status in PostgreSQL first.
+    const {
+      data,
+      error,
+    } = await supabase
+      .from("events")
+      .update({
+        status: status.toLowerCase(),
+      })
+      .eq("id", id)
+      .select("id, status")
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data) {
+      throw new Error(
+        "The event was not updated. Check administrator permissions."
+      );
+    }
+
+    // Update the interface only after PostgreSQL succeeds.
     setEvents((previous) =>
       previous.map((event) =>
         event.id === id
-          ? { ...event, status }
-          : event,
-      ),
+          ? {
+              ...event,
+              status,
+            }
+          : event
+      )
     );
 
     const messages: Record<EventStatus, string> = {
       Draft: "Event moved to Draft.",
       Published: "Event published successfully.",
       Live: "Event marked as Live.",
-      Cancelled: "Event cancelled.",
+      Cancelled: "Event cancelled successfully.",
     };
 
     setToast(messages[status]);
-  }
 
-  function advanceEventStatus(event: EventRecord) {
-    if (event.status === "Draft") {
-      changeEventStatus(event.id, "Published");
-      return;
-    }
+  } catch (error) {
+    console.error(
+      "Event status update failed:",
+      error
+    );
 
-    if (event.status === "Published") {
-      changeEventStatus(event.id, "Live");
-      return;
-    }
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error
+          ? String(error.message)
+          : "Unknown database error.";
 
     setToast(
-      "This event is already live or has been cancelled.",
+      `Could not update event: ${message}`
     );
   }
+}
+
+async function advanceEventStatus(
+  event: EventRecord
+) {
+  if (userRole !== "admin") {
+    setToast(
+      "Only administrators can publish events."
+    );
+    return;
+  }
+
+  if (event.status === "Draft") {
+    await changeEventStatus(
+      event.id,
+      "Published"
+    );
+    return;
+  }
+
+  if (event.status === "Published") {
+    await changeEventStatus(
+      event.id,
+      "Live"
+    );
+    return;
+  }
+
+  setToast(
+    "This event is already live or has been cancelled."
+  );
+} 
 
 /* -------------------------------------------------------
    PARTICIPANT REGISTRATION
@@ -3598,6 +3763,125 @@ async function registerForEvent(event: EventRecord) {
     );
   }
 
+  function renderNotifications() {
+  const unreadCount = notifications.filter(
+    (notification) => !notification.read_at
+  ).length;
+
+  return (
+    <>
+      <SectionHeading
+        eyebrow="CAMPUS UPDATES"
+        title="Notifications"
+        description="Official updates about campus events, venue changes, scheduling changes and cancellations."
+      />
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h3>Recent notifications</h3>
+
+            <p>
+              {unreadCount} unread notification
+              {unreadCount === 1 ? "" : "s"}
+            </p>
+          </div>
+
+          <Bell size={22} />
+        </div>
+
+        {notifications.length === 0 ? (
+          <div className="empty-state">
+            <Bell size={32} />
+
+            <h3>No notifications yet</h3>
+
+            <p>
+              Official campus event updates will appear here.
+            </p>
+          </div>
+        ) : (
+          <div className="notification-feed">
+            {notifications.map((notification) => (
+              <article
+                className={`notification-card ${
+                  notification.read_at
+                    ? "notification-read"
+                    : "notification-unread"
+                }`}
+                key={notification.id}
+              >
+                <div className="notification-symbol">
+                  <Bell size={19} />
+                </div>
+
+                <div className="notification-body">
+                  <strong>
+                    {notification.title}
+                  </strong>
+
+                  <p>
+                    {notification.message}
+                  </p>
+
+                  <span>
+                    {new Date(
+                      notification.created_at
+                    ).toLocaleString("en-IN")}
+                  </span>
+
+                  {!notification.read_at && (
+                    <button
+                      type="button"
+                      className="text-button notification-read-button"
+                      onClick={async () => {
+                        const readAt =
+                          new Date().toISOString();
+
+                        const { error } = await createClient()
+                          .from("notifications")
+                          .update({
+                            read_at: readAt,
+                          })
+                          .eq("id", notification.id);
+
+                        if (error) {
+                          console.error(
+                            "Could not mark notification as read:",
+                            error
+                          );
+
+                          setToast(
+                            "Could not update notification."
+                          );
+
+                          return;
+                        }
+
+                        setNotifications((previous) =>
+                          previous.map((item) =>
+                            item.id === notification.id
+                              ? {
+                                  ...item,
+                                  read_at: readAt,
+                                }
+                              : item
+                          )
+                        );
+                      }}
+                    >
+                      Mark as read
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </>
+  );
+}
   /* =======================================================
      PAGE CONTENT ROUTER
   ======================================================= */
@@ -3656,6 +3940,9 @@ async function registerForEvent(event: EventRecord) {
 
       case "Communications":
         return renderCommunications();
+
+      case "Notifications":
+        return renderNotifications();
 
       case "Reports":
         return renderReports();
@@ -3716,8 +4003,11 @@ async function registerForEvent(event: EventRecord) {
         </div>
 
         <nav className="sidebar-navigation">
-          {roleNavigation.map((group) => (
-            <div className="nav-group" key={group.title}>
+          {roleNavigation.map((group, groupIndex) => (
+  <div
+    className="nav-group"
+    key={`${group.title}-${groupIndex}`}
+  >
               <div className="nav-group-label">
                 {group.title}
               </div>
@@ -3857,18 +4147,19 @@ async function registerForEvent(event: EventRecord) {
             </button>
 
             <button
-              className="icon-button notification-button"
-              onClick={() =>
-                setActivePage("Issue Center")
-              }
-              aria-label="Review notifications and issues"
-            >
-              <Bell size={19} />
+  type="button"
+  className="icon-button notification-button"
+  onClick={() => setActivePage("Notifications")}
+  aria-label="Review notifications"
+>
+  <Bell size={18} />
 
-              {openIssues.length > 0 && (
-                <span className="notification-dot" />
-              )}
-            </button>
+  {notifications.some(
+    (notification) => !notification.read_at
+  ) && (
+    <span className="notification-dot" />
+  )}
+</button>
 
             <button
               className="topbar-avatar"

@@ -4533,3 +4533,104 @@ tbody tr:hover {
 .brand-mark span {
   color: #ffffff;
 }
+/* ==========================================
+   VERTEX NOTIFICATION FEED
+========================================== */
+
+.notification-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.notification-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+
+  padding: 18px;
+
+  border: 1px solid var(--border);
+  border-radius: 16px;
+
+  background: var(--surface);
+
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.notification-card:hover {
+  transform: translateY(-2px);
+
+  box-shadow:
+    0 8px 24px rgba(35, 35, 70, 0.07);
+}
+
+.notification-unread {
+  border-left: 4px solid #7c3aed;
+  background: #fcfaff;
+}
+
+.notification-read {
+  opacity: 0.78;
+}
+
+.notification-symbol {
+  display: grid;
+  place-items: center;
+
+  width: 42px;
+  height: 42px;
+
+  flex-shrink: 0;
+
+  border-radius: 13px;
+
+  color: #7c3aed;
+  background: #f0eaff;
+}
+
+.notification-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-body strong {
+  display: block;
+
+  color: var(--text);
+
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.notification-body p {
+  margin: 7px 0;
+
+  color: #66677e;
+
+  font-size: 13px;
+  line-height: 1.6;
+
+  overflow-wrap: anywhere;
+}
+
+.notification-body span {
+  display: block;
+
+  color: #85869b;
+
+  font-size: 11px;
+}
+
+.notification-read-button {
+  margin-top: 9px;
+}
+
+@media (max-width: 600px) {
+  .notification-card {
+    padding: 13px;
+  }
+}
