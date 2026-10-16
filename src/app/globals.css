@@ -4333,3 +4333,203 @@ tbody tr:hover {
   outline: 2px solid #a394ff;
   outline-offset: 3px;
 }
+/* ==========================================
+   VERTEX MULTICOLOUR SIDEBAR
+========================================== */
+
+.nav-item {
+  --item-accent: #8b5cf6;
+  --item-tint: rgba(139, 92, 246, 0.15);
+
+  border-color: transparent;
+
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
+}
+
+
+/* HOME / OVERVIEW — BLUE */
+
+.nav-item[data-nav="overview"] {
+  --item-accent: #60a5fa;
+  --item-tint: rgba(59, 130, 246, 0.17);
+}
+
+
+/* EVENT MANAGEMENT — VIOLET */
+
+.nav-item[data-nav="event-management"] {
+  --item-accent: #a78bfa;
+  --item-tint: rgba(139, 92, 246, 0.18);
+}
+
+
+/* REGISTRATIONS — TEAL */
+
+.nav-item[data-nav="registrations"] {
+  --item-accent: #2dd4bf;
+  --item-tint: rgba(20, 184, 166, 0.16);
+}
+
+
+/* VENUES — AMBER */
+
+.nav-item[data-nav="venue-rooms"] {
+  --item-accent: #fbbf24;
+  --item-tint: rgba(245, 158, 11, 0.16);
+}
+
+
+/* CALENDAR — SKY BLUE */
+
+.nav-item[data-nav="calendar"] {
+  --item-accent: #38bdf8;
+  --item-tint: rgba(14, 165, 233, 0.16);
+}
+
+
+/* LIVE CHANGE CENTRE — CYAN */
+
+.nav-item[data-nav="live-change-centre"] {
+  --item-accent: #22d3ee;
+  --item-tint: rgba(6, 182, 212, 0.16);
+}
+
+
+/* VOLUNTEERS — GREEN */
+
+.nav-item[data-nav="volunteers"] {
+  --item-accent: #4ade80;
+  --item-tint: rgba(34, 197, 94, 0.16);
+}
+
+
+/* ISSUE CENTRE — CORAL */
+
+.nav-item[data-nav="issue-center"] {
+  --item-accent: #fb7185;
+  --item-tint: rgba(244, 63, 94, 0.16);
+}
+
+
+/* COMMUNICATIONS — PINK */
+
+.nav-item[data-nav="communications"] {
+  --item-accent: #f472b6;
+  --item-tint: rgba(236, 72, 153, 0.16);
+}
+
+
+/* EVENT COPILOT — PURPLE */
+
+.nav-item[data-nav="event-copilot"] {
+  --item-accent: #c084fc;
+  --item-tint: rgba(168, 85, 247, 0.16);
+}
+
+
+/* ANALYTICS — INDIGO */
+
+.nav-item[data-nav="analytics"] {
+  --item-accent: #818cf8;
+  --item-tint: rgba(99, 102, 241, 0.16);
+}
+
+
+/* REPORTS — ORANGE */
+
+.nav-item[data-nav="reports"] {
+  --item-accent: #fb923c;
+  --item-tint: rgba(249, 115, 22, 0.16);
+}
+
+
+/* SETTINGS — SLATE */
+
+.nav-item[data-nav="settings"] {
+  --item-accent: #cbd5e1;
+  --item-tint: rgba(148, 163, 184, 0.14);
+}
+
+
+/* NOTIFICATIONS — ROSE */
+
+.nav-item[data-nav="notifications"] {
+  --item-accent: #f9a8d4;
+  --item-tint: rgba(244, 114, 182, 0.16);
+}
+
+
+/* Apply the accent colours to icons. */
+
+.nav-item > svg {
+  color: var(--item-accent);
+  opacity: 1;
+}
+
+
+/* Soft coloured hover. */
+
+.nav-item:hover {
+  color: #ffffff;
+  background: var(--item-tint);
+  border-color: var(--item-tint);
+}
+
+
+/* Different colour for each selected page. */
+
+.nav-item.active {
+  color: #ffffff;
+
+  background:
+    linear-gradient(
+      110deg,
+      var(--item-tint),
+      rgba(255, 255, 255, 0.035)
+    );
+
+  border-color: var(--item-tint);
+}
+
+
+/* Coloured selected icon. */
+
+.nav-item.active > svg {
+  color: var(--item-accent);
+}
+
+
+/* Coloured vertical selection indicator. */
+
+.nav-item.active::before {
+  background: var(--item-accent);
+
+  box-shadow:
+    0 0 12px var(--item-tint);
+}
+
+
+/* Multicolour brand mark. */
+
+.brand-mark {
+  background:
+    linear-gradient(
+      135deg,
+      #2563eb 0%,
+      #7c3aed 40%,
+      #ec4899 73%,
+      #fb923c 100%
+    );
+
+  box-shadow:
+    0 6px 22px rgba(124, 58, 237, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.brand-mark span {
+  color: #ffffff;
+}

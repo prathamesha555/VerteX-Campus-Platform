@@ -488,7 +488,7 @@ export default function LoginPage() {
 <div className="auth-switch-prompt">
   {mode === "signin" ? (
     <>
-      <span>Don't have an account?</span>
+      <span>Don&apos;t have an account?</span>
 
       <button
         type="button"

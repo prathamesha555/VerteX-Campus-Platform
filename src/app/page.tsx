@@ -10,7 +10,6 @@ import {
 
 import {
   Activity,
-  ArrowDownRight,
   ArrowUpRight,
   Bell,
   LogOut,
@@ -59,6 +58,7 @@ type PageName =
   | "Analytics"
   | "Communications"
   | "Reports"
+  | "Notifications"
   | "Settings";
 
 type EventStatus =
@@ -341,20 +341,88 @@ function mapDatabaseStatus(status: string): EventStatus {
 function findVenueConflict(
   candidate: EventRecord,
   events: EventRecord[],
-) {
-  return events.find((event) => {
-    if (event.id === candidate.id) return false;
+): EventRecord | undefined {
+  // Draft and cancelled events do not reserve a venue.
+  // Only published and live events are active bookings.
 
-    if (event.venue !== candidate.venue) return false;
+  const activeStatuses: EventStatus[] = [
+    "Published",
+    "Live",
+  ];
 
-    if (event.status === "Cancelled") return false;
+  if (!activeStatuses.includes(candidate.status)) {
+    return undefined;
+  }
 
-    const aStart = new Date(candidate.startAt).getTime();
-    const aEnd = new Date(candidate.endAt).getTime();
-    const bStart = new Date(event.startAt).getTime();
-    const bEnd = new Date(event.endAt).getTime();
+  const candidateStart = new Date(
+    candidate.startAt,
+  ).getTime();
 
-    return aStart < bEnd && bStart < aEnd;
+  const candidateEnd = new Date(
+    candidate.endAt,
+  ).getTime();
+
+  // Reject invalid time ranges.
+  if (
+    !Number.isFinite(candidateStart) ||
+    !Number.isFinite(candidateEnd) ||
+    candidateEnd <= candidateStart
+  ) {
+    return undefined;
+  }
+
+  return events.find((existingEvent) => {
+    // Ignore the same event when editing it.
+    if (existingEvent.id === candidate.id) {
+      return false;
+    }
+
+    // Different venues cannot conflict.
+    if (existingEvent.venue !== candidate.venue) {
+      return false;
+    }
+
+    // Draft and cancelled events are not active bookings.
+    if (
+      !activeStatuses.includes(existingEvent.status)
+    ) {
+      return false;
+    }
+
+    const existingStart = new Date(
+      existingEvent.startAt,
+    ).getTime();
+
+    const existingEnd = new Date(
+      existingEvent.endAt,
+    ).getTime();
+
+    if (
+      !Number.isFinite(existingStart) ||
+      !Number.isFinite(existingEnd) ||
+      existingEnd <= existingStart
+    ) {
+      return false;
+    }
+
+    /*
+      Overlap rule:
+
+      Event A: 10:00 - 11:00
+      Event B: 10:30 - 11:30
+
+      Conflict: YES
+
+      Event A: 10:00 - 11:00
+      Event B: 11:00 - 12:00
+
+      Conflict: NO
+    */
+
+    return (
+      candidateStart < existingEnd &&
+      existingStart < candidateEnd
+    );
   });
 }
 
@@ -400,6 +468,12 @@ export default function Home() {
 
   const [myRegistrations, setMyRegistrations] =
     useState<string[]>([]);
+
+  const [myRegistrationStatuses, setMyRegistrationStatuses] =
+    useState<Record<string, string>>({});
+
+  const [registeringEventId, setRegisteringEventId] =
+    useState<string | null>(null);
 
   const [announcements, setAnnouncements] =
     useState<Announcement[]>([]);
@@ -449,17 +523,14 @@ export default function Home() {
   ------------------------------------------------------- */
 
   useEffect(() => {
-
+    // Intentional one-time hydration of browser-persisted data.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIssues(
       readStorage(STORAGE_KEYS.issues, initialIssues),
     );
 
     setTasks(
       readStorage(STORAGE_KEYS.tasks, initialTasks),
-    );
-
-    setMyRegistrations(
-      readStorage(STORAGE_KEYS.registrations, []),
     );
 
     setAnnouncements(
@@ -569,15 +640,6 @@ useEffect(() => {
       JSON.stringify(tasks),
     );
   }, [tasks, ready]);
-
-  useEffect(() => {
-    if (!ready) return;
-
-    localStorage.setItem(
-      STORAGE_KEYS.registrations,
-      JSON.stringify(myRegistrations),
-    );
-  }, [myRegistrations, ready]);
 
   useEffect(() => {
     if (!ready) return;
@@ -738,6 +800,102 @@ useEffect(() => {
 }, []);
 
 /* =======================================================
+   LOAD THE CURRENT USER'S REGISTRATIONS FROM SUPABASE
+======================================================= */
+
+useEffect(() => {
+  let active = true;
+
+  async function loadMyRegistrations() {
+    try {
+      const supabase = createClient();
+
+      // Identify the currently authenticated user.
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError) {
+        throw authError;
+      }
+
+      if (!user) {
+        if (active) {
+          setMyRegistrations([]);
+          setMyRegistrationStatuses({});
+        }
+
+        return;
+      }
+
+      // Load only registration records belonging to this user.
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("registrations")
+        .select("event_id, status")
+        .eq("participant_id", user.id);
+
+      if (error) {
+        throw error;
+      }
+
+      if (!active) return;
+
+      const rows = (
+        data ?? []
+      ) as Array<{
+        event_id: string;
+        status: string;
+      }>;
+
+      // Include active registrations and waitlisted users.
+      // Cancelled registrations should not appear as active.
+      const activeRows = rows.filter((row) =>
+        ["registered", "confirmed", "waitlisted"].includes(
+          (row.status ?? "").toLowerCase()
+        )
+      );
+
+      const uniqueEventIds = [
+        ...new Set(activeRows.map((row) => row.event_id)),
+      ];
+
+      const statuses: Record<string, string> = {};
+
+      for (const row of activeRows) {
+        statuses[row.event_id] = (
+          row.status ?? "registered"
+        ).toLowerCase();
+      }
+
+      setMyRegistrations(uniqueEventIds);
+      setMyRegistrationStatuses(statuses);
+
+    } catch (error) {
+      console.error(
+        "Failed to load registrations:",
+        error
+      );
+
+      if (active) {
+        setToast(
+          "Could not load your registrations. Please refresh the page."
+        );
+      }
+    }
+  }
+
+  void loadMyRegistrations();
+
+  return () => {
+    active = false;
+  };
+}, []);
+
+/* =======================================================
    SIGN OUT
 ======================================================= */
 
@@ -787,9 +945,7 @@ async function handleLogout() {
    ROLE-BASED PERMISSIONS
 ======================================================= */
 
-const canManageEvents =
-  userRole === "organizer" ||
-  userRole === "admin";
+const canManageEvents = userRole === "admin";
 
 const isVolunteer =
   userRole === "volunteer";
@@ -1232,60 +1388,192 @@ async function saveEvent(
     );
   }
 
-  /* -------------------------------------------------------
-     PARTICIPANT REGISTRATION
-  ------------------------------------------------------- */
+/* -------------------------------------------------------
+   PARTICIPANT REGISTRATION
+------------------------------------------------------- */
 
-  function registerForEvent(event: EventRecord) {
-    if (myRegistrations.includes(event.id)) {
-      setToast(
-        "You are already registered for this event.",
-      );
-      return;
-    }
-
-    if (event.status === "Draft") {
-      setToast(
-        "This event is not published yet.",
-      );
-      return;
-    }
-
-    if (event.status === "Cancelled") {
-      setToast(
-        "Registration is unavailable for cancelled events.",
-      );
-      return;
-    }
-
-    if (event.registered >= event.capacity) {
-      setToast(
-        "This event has reached its registration capacity.",
-      );
-      return;
-    }
-
-    setEvents((previous) =>
-      previous.map((item) =>
-        item.id === event.id
-          ? {
-              ...item,
-              registered: item.registered + 1,
-            }
-          : item,
-      ),
-    );
-
-    setMyRegistrations((previous) => [
-      ...previous,
-      event.id,
-    ]);
-
-    setToast(
-      `Successfully registered for ${event.title}.`,
-    );
+async function registerForEvent(event: EventRecord) {
+  // Prevent duplicate clicks while a request is running.
+  if (registeringEventId === event.id) {
+    return;
   }
 
+  // Check the registration state already loaded from the DB.
+  if (myRegistrations.includes(event.id)) {
+    setToast(
+      myRegistrationStatuses[event.id] === "waitlisted"
+        ? "You are already on the waitlist for this event."
+        : "You are already registered for this event."
+    );
+
+    return;
+  }
+
+  if (event.status === "Draft") {
+    setToast("This event has not been published yet.");
+    return;
+  }
+
+  if (event.status === "Cancelled") {
+    setToast(
+      "Registration is unavailable for cancelled events."
+    );
+
+    return;
+  }
+
+  setRegisteringEventId(event.id);
+
+  try {
+    const supabase = createClient();
+
+    // Step 1: Verify that a user is signed in.
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError) {
+      throw authError;
+    }
+
+    if (!user) {
+      window.location.replace("/login");
+      return;
+    }
+
+    // Step 2: Call the secure PostgreSQL function.
+    //
+    // The database function checks the user's role,
+    // event status, duplicate registrations and capacity.
+    //
+    // If the event is full, it can return a waitlisted status.
+
+    const {
+      data,
+      error,
+    } = await supabase.rpc(
+      "register_for_event",
+      {
+        p_event_id: event.id,
+      }
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    // PostgreSQL table-returning functions normally return
+    // an array of records.
+    const result = (
+      Array.isArray(data) ? data[0] : data
+    ) as {
+      registration_id?: string;
+      registration_status?: string;
+    } | null;
+
+    if (!result?.registration_id) {
+      throw new Error(
+        "The database did not return a registration record."
+      );
+    }
+
+    const registrationStatus = (
+      result.registration_status ?? "registered"
+    ).toLowerCase();
+
+    // Step 3: Update the interface only after the
+    // database confirms that the registration exists.
+    setMyRegistrations((previous) =>
+      previous.includes(event.id)
+        ? previous
+        : [...previous, event.id]
+    );
+
+    setMyRegistrationStatuses((previous) => ({
+      ...previous,
+      [event.id]: registrationStatus,
+    }));
+
+    // Step 4: Refresh registration counts from Supabase.
+    //
+    // A failure here should not undo a successful registration.
+
+    const {
+      data: countData,
+      error: countError,
+    } = await supabase.rpc(
+      "get_event_registration_counts"
+    );
+
+    if (countError) {
+      console.error(
+        "Could not refresh registration counts:",
+        countError
+      );
+    } else {
+      const rows = (
+        countData ?? []
+      ) as RegistrationCountRow[];
+
+      const countMap = new Map<string, number>(
+        rows.map((row) => [
+          row.event_id,
+          Number(row.registration_count),
+        ])
+      );
+
+      setEvents((previous) =>
+        previous.map((item) =>
+          countMap.has(item.id)
+            ? {
+                ...item,
+                registered: countMap.get(item.id) ?? 0,
+              }
+            : item
+        )
+      );
+    }
+
+    // Step 5: Display an accurate confirmation.
+    if (registrationStatus === "waitlisted") {
+      setToast(
+        `The event is full. You are on the waitlist for ${event.title}.`
+      );
+    } else if (
+      registrationStatus === "registered" ||
+      registrationStatus === "confirmed"
+    ) {
+      setToast(
+        `Successfully registered for ${event.title}.`
+      );
+    } else {
+      setToast(
+        `Registration saved with status: ${registrationStatus}.`
+      );
+    }
+
+  } catch (error) {
+    console.error(
+      "Event registration failed:",
+      error
+    );
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error
+          ? String(error.message)
+          : "Please try again.";
+
+    setToast(`Registration failed: ${message}`);
+
+  } finally {
+    setRegisteringEventId(null);
+  }
+}
   /* -------------------------------------------------------
      ISSUE CENTER
   ------------------------------------------------------- */
@@ -1590,14 +1878,21 @@ async function saveEvent(
             {event.status === "Published" ||
             event.status === "Live" ? (
               <button
-                className="button button-primary button-small"
-                disabled={registeredByCurrentUser}
-                onClick={() => registerForEvent(event)}
-              >
-                {registeredByCurrentUser
-                  ? "Registered"
-                  : "Register"}
-              </button>
+               className="button button-primary button-small"
+                 disabled={
+                registeredByCurrentUser ||
+                registeringEventId === event.id
+                }
+  onClick={() => registerForEvent(event)}
+>
+  {registeringEventId === event.id
+    ? "Registering..."
+    : registeredByCurrentUser
+      ? myRegistrationStatuses[event.id] === "waitlisted"
+        ? "Waitlisted"
+        : "Registered"
+      : "Register"}
+</button>
             ) : (
               <button
                 className="button button-secondary button-small"
@@ -1863,9 +2158,7 @@ async function saveEvent(
             <div className="panel-heading">
               <div>
                 <h3>Upcoming events</h3>
-                <p>
-                  A quick look at what's happening next.
-                </p>
+                <p>Today&apos;s event schedule</p>
               </div>
 
               <button
@@ -2163,7 +2456,7 @@ async function saveEvent(
           <StatCard
             label="My registrations"
             value={registeredEvents.length}
-            note="Registered in this browser"
+            note="Registrations saved to your account"
             icon={Ticket}
           />
 
@@ -2231,7 +2524,7 @@ async function saveEvent(
             <div>
               <h3>My registrations</h3>
               <p>
-                Events registered from the current browser.
+                Your saved event registrations.Your saved event registrations.
               </p>
             </div>
           </div>
@@ -3003,9 +3296,7 @@ async function saveEvent(
           <div className="panel-heading">
             <div>
               <h3>Event capacity overview</h3>
-              <p>
-                Compare each event's registrations with available seats.
-              </p>
+              <p>You&apos;re viewing recent announcements.</p>
             </div>
           </div>
 
@@ -3440,8 +3731,11 @@ async function saveEvent(
                 return (
                   <button
                     className={`nav-item ${active ? "active" : ""}`}
-                    key={item.name}
-                    onClick={() => {
+                      data-nav={item.name
+                      .toLowerCase()
+                      .replace(/[^a-z0-9]+/g, "-")}
+                      key={item.name}
+                      onClick={() => {
                       setActivePage(item.name);
                       setSidebarOpen(false);
                     }}
